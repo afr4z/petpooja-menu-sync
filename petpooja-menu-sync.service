@@ -1,0 +1,11 @@
+[Unit]
+Description=Petpooja Menu Sync Webhook
+After=network.target
+
+[Service]
+WorkingDirectory=/home/afr4z/petpooja-menu-sync
+ExecStart=/usr/bin/node webhook.js
+Restart=always
+
+[Install]
+WantedBy=multi-user.target

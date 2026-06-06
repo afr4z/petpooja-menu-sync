@@ -1,0 +1,9 @@
+[Unit]
+Description=Petpooja Order Dispatch
+After=network.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/afr4z/petpooja-menu-sync
+ExecStart=/usr/bin/node dispatch-orders.js
+Environment=NODE_ENV=production

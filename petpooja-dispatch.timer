@@ -1,0 +1,14 @@
+[Unit]
+Description=Petpooja Order Dispatch Timer (3x daily)
+
+[Timer]
+# Breakfast: after 10pm IST deadline → 16:30 UTC
+OnCalendar=*-*-* 16:30:00
+# Lunch: after 9:30am IST deadline → 4:00 UTC
+OnCalendar=*-*-* 04:00:00
+# Dinner: after 5pm IST deadline → 11:30 UTC
+OnCalendar=*-*-* 11:30:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target

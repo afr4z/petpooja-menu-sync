@@ -1,3 +1,4 @@
+import "./load-env.js";
 import { readFileSync, appendFileSync } from "node:fs";
 
 const LOG_FILE = "stock-updates.log";
@@ -9,16 +10,8 @@ function log(line) {
   try { appendFileSync(LOG_FILE, msg + "\n"); } catch {}
 }
 
-const env = Object.fromEntries(
-  readFileSync(".env", "utf-8")
-    .split("\n")
-    .filter(Boolean)
-    .map((l) => l.split("="))
-    .map(([k, ...v]) => [k.trim(), v.join("=").trim()]),
-);
-
-const SUPABASE_URL = env.SUPABASE_URL;
-const SUPABASE_KEY = env.SUPABASE_SERVICE_ROLE_KEY;
+const SUPABASE_URL = process.env.SUPABASE_URL;
+const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
 function supFetch(url, opts = {}) {
   return fetch(`${SUPABASE_URL}/rest/v1/${url}`, {

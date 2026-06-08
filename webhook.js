@@ -4,6 +4,22 @@ import { appendFileSync } from "node:fs";
 import { syncMenu } from "./sync.js";
 import { handleStockUpdate } from "./stock-update.js";
 
+const SUPABASE_URL = process.env.SUPABASE_URL;
+const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
+const sf = (url, o = {}) => fetch(SUPABASE_URL + "/rest/v1/" + url, {
+  ...o, headers: { apikey: SUPABASE_KEY, Authorization: `Bearer ${SUPABASE_KEY}`, "Content-Type": "application/json", ...o.headers }
+});
+
+const STATUS_MAP = {
+  "-1": "cancelled",
+  "1": "accepted",
+  "2": "accepted",
+  "3": "accepted",
+  "4": "ready",
+  "5": "ready",
+  "10": "delivered",
+};
+
 const LOG_FILE = "menu-pushes.log";
 
 function log(line) {
@@ -72,6 +88,14 @@ http.createServer(async (req, res) => {
     if (!body || body.success !== "1") return json(res, 400, { error: "Invalid push" });
 
     try {
+      // Dump raw menu payload for debugging
+      const ts = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+      import("node:fs").then(fs => {
+        const { mkdirSync, writeFileSync } = fs.default || fs;
+        try { mkdirSync("menu-dumps", { recursive: true }); } catch {}
+        writeFileSync(`menu-dumps/raw-${ts}.json`, JSON.stringify(body, null, 2));
+      }).catch(() => {});
+
       const r = await syncMenu(body);
       log(`[MENU] ${JSON.stringify(r)}`);
       json(res, 200, { success: "1", ...r });
@@ -80,6 +104,27 @@ http.createServer(async (req, res) => {
       json(res, 500, { success: "0", error: e.message });
     }
     return;
+  }
+
+  if (req.url === "/order-status") {
+    log(`[CALLBACK] ${JSON.stringify(body)}`);
+    const { orderID: clientId, status, cancel_reason, ...rest } = body || {};
+    if (clientId && status) {
+      const ourStatus = STATUS_MAP[String(status)];
+      if (ourStatus) {
+        const update = { status: ourStatus };
+        if (ourStatus === "cancelled" && cancel_reason) update.cancel_reason = cancel_reason;
+        const r = await sf(`orders?petpooja_client_id=eq.${encodeURIComponent(clientId)}`, {
+          method: "PATCH",
+          body: JSON.stringify(update),
+        });
+        if (r.ok) log(`[CALLBACK] Updated ${clientId} → ${ourStatus}`);
+        else log(`[CALLBACK] Failed to update ${clientId}: ${r.status} ${await r.text()}`);
+      } else {
+        log(`[CALLBACK] Unknown status ${status} for ${clientId}`);
+      }
+    }
+    return json(res, 200, { success: "1" });
   }
 
   json(res, 404, { error: "Not found" });

@@ -48,7 +48,7 @@ function parseCategoryName(categoryName) {
   const existing = await supFetch("dishes?select=id,name,is_veg,price,is_available,meal_plan_id,slot").then(r => r.json()) || [];
 
   const byKey = {};
-  for (const d of existing) byKey[`${d.name}|${d.meal_plan_id}|${d.slot}`] = d;
+  for (const d of existing) byKey[`${d.name.toLowerCase()}|${d.meal_plan_id}|${d.slot}`] = d;
 
   const batch = [];
   const keys = new Set();
@@ -58,7 +58,7 @@ function parseCategoryName(categoryName) {
     for (const item of items) {
       const name = item.itemname?.trim();
       if (!name) continue;
-      const k = `${name}|${match.plan.id}|${match.slot}`;
+      const k = `${name.toLowerCase()}|${match.plan.id}|${match.slot}`;
       keys.add(k);
       const r = byKey[k];
       batch.push({
@@ -83,7 +83,7 @@ function parseCategoryName(categoryName) {
     });
   }
 
-  const disable = existing.filter(d => d.is_available && !keys.has(`${d.name}|${d.meal_plan_id}|${d.slot}`));
+  const disable = existing.filter(d => d.is_available && !keys.has(`${d.name.toLowerCase()}|${d.meal_plan_id}|${d.slot}`));
   if (disable.length) {
     const ids = disable.map(d => d.id);
     await supFetch(`dishes?id=in.(${ids.join(",")})`, {

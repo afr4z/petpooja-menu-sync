@@ -29,6 +29,47 @@ function log(line) {
   try { appendFileSync(LOG_FILE, msg + "\n"); } catch {}
 }
 
+const NOTIFY_URL = (process.env.APP_URL || "").replace(/\/+$/, "") + "/api/notify";
+const CRON_SECRET = process.env.CRON_SECRET;
+
+function slotLabel(slot) {
+  const m = { breakfast: "Breakfast", lunch: "Lunch", dinner: "Dinner" };
+  return m[slot] || slot || "Meal";
+}
+
+async function notifyDelivery(clientId) {
+  if (!NOTIFY_URL || !CRON_SECRET) {
+    log(`[NOTIFY] Skipped ${clientId}: APP_URL/CRON_SECRET not configured`);
+    return;
+  }
+  const sel = await sf(`orders?petpooja_client_id=eq.${encodeURIComponent(clientId)}&select=phone,item_name,slot`);
+  if (!sel.ok) {
+    throw new Error(`select failed: ${sel.status}`);
+  }
+  const [order] = await sel.json();
+  if (!order || !order.phone) {
+    log(`[NOTIFY] No order/phone for ${clientId}`);
+    return;
+  }
+  const emoji = order.slot === "breakfast" ? "☀️" : order.slot === "dinner" ? "🌙" : "🍽️";
+  const message =
+    `✅ *Delivery Confirmed*\n\n` +
+    `${emoji} *${slotLabel(order.slot)}*: ${order.item_name || "Your meal"}\n\n` +
+    `Your meal has been delivered. Enjoy! 🍽️\n\n` +
+    `— FitFuel Nutrition`;
+
+  const nr = await fetch(NOTIFY_URL, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${CRON_SECRET}`,
+    },
+    body: JSON.stringify({ to: order.phone, body: message }),
+  });
+  if (!nr.ok) throw new Error(`notify ${nr.status}: ${await nr.text()}`);
+  log(`[NOTIFY] Sent delivery confirmation to ${order.phone} for ${clientId}`);
+}
+
 const PORT = process.env.PORT || 3000;
 const SECRET = process.env.INTERNAL_SECRET || "fitfuel-secret";
 const PP_API = process.env.PETPOOJA_API_URL || "https://qle1yy2ydc.execute-api.ap-southeast-1.amazonaws.com/V1";
@@ -120,6 +161,14 @@ http.createServer(async (req, res) => {
         });
         if (r.ok) log(`[CALLBACK] Updated ${clientId} → ${ourStatus}`);
         else log(`[CALLBACK] Failed to update ${clientId}: ${r.status} ${await r.text()}`);
+
+        if (ourStatus === "delivered") {
+          try {
+            await notifyDelivery(clientId);
+          } catch (e) {
+            log(`[NOTIFY] Failed for ${clientId}: ${e.message}`);
+          }
+        }
       } else {
         log(`[CALLBACK] Unknown status ${status} for ${clientId}`);
       }

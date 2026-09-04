@@ -37,7 +37,7 @@ function slotLabel(slot) {
   return m[slot] || slot || "Meal";
 }
 
-async function notifyDelivery(clientId) {
+async function notifyDispatch(clientId) {
   if (!NOTIFY_URL || !CRON_SECRET) {
     log(`[NOTIFY] Skipped ${clientId}: APP_URL/CRON_SECRET not configured`);
     return;
@@ -162,9 +162,9 @@ http.createServer(async (req, res) => {
         if (r.ok) log(`[CALLBACK] Updated ${clientId} → ${ourStatus}`);
         else log(`[CALLBACK] Failed to update ${clientId}: ${r.status} ${await r.text()}`);
 
-        if (ourStatus === "delivered") {
+        if (String(status) === "5") {
           try {
-            await notifyDelivery(clientId);
+            await notifyDispatch(clientId);
           } catch (e) {
             log(`[NOTIFY] Failed for ${clientId}: ${e.message}`);
           }

@@ -53,9 +53,9 @@ async function notifyDelivery(clientId) {
   }
   const emoji = order.slot === "breakfast" ? "☀️" : order.slot === "dinner" ? "🌙" : "🍽️";
   const message =
-    `✅ *Delivery Confirmed*\n\n` +
+    `🚚 *Meal Dispatched*\n\n` +
     `${emoji} *${slotLabel(order.slot)}*: ${order.item_name || "Your meal"}\n\n` +
-    `Your meal has been delivered. Enjoy! 🍽️\n\n` +
+    `Your meal is on its way and will be with you shortly! 🍽️\n\n` +
     `— FitFuel Nutrition`;
 
   const nr = await fetch(NOTIFY_URL, {
@@ -67,7 +67,7 @@ async function notifyDelivery(clientId) {
     body: JSON.stringify({ to: order.phone, body: message }),
   });
   if (!nr.ok) throw new Error(`notify ${nr.status}: ${await nr.text()}`);
-  log(`[NOTIFY] Sent delivery confirmation to ${order.phone} for ${clientId}`);
+  log(`[NOTIFY] Sent dispatch confirmation to ${order.phone} for ${clientId}`);
 }
 
 const PORT = process.env.PORT || 3000;

@@ -201,6 +201,7 @@ for (const order of orders) {
             pc_tax_percentage: "0",
             order_type: "H",
             payment_type: "ONLINE",
+            discount_type: "F",
             discount_total: "0",
             tax_total: "0",
             total: perMealCost.toFixed(2) || "0",
@@ -228,7 +229,6 @@ for (const order of orders) {
           ],
         },
         Tax: { details: [] },
-        Discount: { details: [] },
       },
     },
   };

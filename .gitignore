@@ -1,0 +1,10 @@
+.env
+*.bak.*
+*.bak
+*.log
+menu-dumps/
+*.mjs
+test-*.py
+test-*.js
+demo-*.js
+e2e-*.mjs

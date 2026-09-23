@@ -4,6 +4,6 @@ After=network.target
 
 [Service]
 Type=oneshot
-WorkingDirectory=/home/afr4z/petpooja-menu-sync
+WorkingDirectory=/home/afraz/petpooja-menu-sync
 ExecStart=/usr/bin/node dispatch-orders.js
 Environment=NODE_ENV=production

@@ -2,7 +2,23 @@ import "./load-env.js";
 import http from "node:http";
 import { appendFileSync } from "node:fs";
 import { syncMenu } from "./sync.js";
-import { handleStockUpdate } from "./stock-update.js";
+import { handleStockUpdate, handleStoreStatus } from "./stock-update.js";
+
+const SUPABASE_URL = process.env.SUPABASE_URL;
+const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
+const sf = (url, o = {}) => fetch(SUPABASE_URL + "/rest/v1/" + url, {
+  ...o, headers: { apikey: SUPABASE_KEY, Authorization: `Bearer ${SUPABASE_KEY}`, "Content-Type": "application/json", ...o.headers }
+});
+
+const STATUS_MAP = {
+  "-1": "cancelled",
+  "1": "accepted",
+  "2": "accepted",
+  "3": "accepted",
+  "4": "ready",
+  "5": "ready",
+  "10": "delivered",
+};
 
 const LOG_FILE = "menu-pushes.log";
 
@@ -11,6 +27,47 @@ function log(line) {
   const msg = `[${ts}] ${line}`;
   console.log(msg);
   try { appendFileSync(LOG_FILE, msg + "\n"); } catch {}
+}
+
+const NOTIFY_URL = (process.env.APP_URL || "").replace(/\/+$/, "") + "/api/notify";
+const CRON_SECRET = process.env.CRON_SECRET;
+
+function slotLabel(slot) {
+  const m = { breakfast: "Breakfast", lunch: "Lunch", dinner: "Dinner" };
+  return m[slot] || slot || "Meal";
+}
+
+async function notifyDispatch(clientId) {
+  if (!NOTIFY_URL || !CRON_SECRET) {
+    log(`[NOTIFY] Skipped ${clientId}: APP_URL/CRON_SECRET not configured`);
+    return;
+  }
+  const sel = await sf(`orders?petpooja_client_id=eq.${encodeURIComponent(clientId)}&select=phone,item_name,slot`);
+  if (!sel.ok) {
+    throw new Error(`select failed: ${sel.status}`);
+  }
+  const [order] = await sel.json();
+  if (!order || !order.phone) {
+    log(`[NOTIFY] No order/phone for ${clientId}`);
+    return;
+  }
+  const emoji = order.slot === "breakfast" ? "☀️" : order.slot === "dinner" ? "🌙" : "🍽️";
+  const message =
+    `🚚 *Meal Dispatched*\n\n` +
+    `${emoji} *${slotLabel(order.slot)}*: ${order.item_name || "Your meal"}\n\n` +
+    `Your meal is on its way and will be with you shortly! 🍽️\n\n` +
+    `— FitFuel Nutrition`;
+
+  const nr = await fetch(NOTIFY_URL, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${CRON_SECRET}`,
+    },
+    body: JSON.stringify({ to: order.phone, body: message }),
+  });
+  if (!nr.ok) throw new Error(`notify ${nr.status}: ${await nr.text()}`);
+  log(`[NOTIFY] Sent dispatch confirmation to ${order.phone} for ${clientId}`);
 }
 
 const PORT = process.env.PORT || 3000;
@@ -67,11 +124,26 @@ http.createServer(async (req, res) => {
     return json(res, 200, { success: "1", ...r });
   }
 
+  // ── Store status from Petpooja ──────────────────────────────
+  if (req.url === "/store-status") {
+    const r = handleStoreStatus(body);
+    log(`[STORE] ${JSON.stringify(r)}`);
+    return json(res, 200, { success: "1", ...r });
+  }
+
   // ── Menu push from Petpooja ─────────────────────────────────
   if (req.url === "/menu") {
     if (!body || body.success !== "1") return json(res, 400, { error: "Invalid push" });
 
     try {
+      // Dump raw menu payload for debugging
+      const ts = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+      import("node:fs").then(fs => {
+        const { mkdirSync, writeFileSync } = fs.default || fs;
+        try { mkdirSync("menu-dumps", { recursive: true }); } catch {}
+        writeFileSync(`menu-dumps/raw-${ts}.json`, JSON.stringify(body, null, 2));
+      }).catch(() => {});
+
       const r = await syncMenu(body);
       log(`[MENU] ${JSON.stringify(r)}`);
       json(res, 200, { success: "1", ...r });
@@ -80,6 +152,35 @@ http.createServer(async (req, res) => {
       json(res, 500, { success: "0", error: e.message });
     }
     return;
+  }
+
+  if (req.url === "/order-status") {
+    log(`[CALLBACK] ${JSON.stringify(body)}`);
+    const { orderID: clientId, status, cancel_reason, ...rest } = body || {};
+    if (clientId && status) {
+      const ourStatus = STATUS_MAP[String(status)];
+      if (ourStatus) {
+        const update = { status: ourStatus };
+        if (ourStatus === "cancelled" && cancel_reason) update.cancel_reason = cancel_reason;
+        const r = await sf(`orders?petpooja_client_id=eq.${encodeURIComponent(clientId)}`, {
+          method: "PATCH",
+          body: JSON.stringify(update),
+        });
+        if (r.ok) log(`[CALLBACK] Updated ${clientId} → ${ourStatus}`);
+        else log(`[CALLBACK] Failed to update ${clientId}: ${r.status} ${await r.text()}`);
+
+        if (String(status) === "5") {
+          try {
+            await notifyDispatch(clientId);
+          } catch (e) {
+            log(`[NOTIFY] Failed for ${clientId}: ${e.message}`);
+          }
+        }
+      } else {
+        log(`[CALLBACK] Unknown status ${status} for ${clientId}`);
+      }
+    }
+    return json(res, 200, { success: "1" });
   }
 
   json(res, 404, { error: "Not found" });

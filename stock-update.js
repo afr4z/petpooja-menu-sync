@@ -1,3 +1,4 @@
+import "./load-env.js";
 import { readFileSync, appendFileSync } from "node:fs";
 
 const LOG_FILE = "stock-updates.log";
@@ -9,16 +10,8 @@ function log(line) {
   try { appendFileSync(LOG_FILE, msg + "\n"); } catch {}
 }
 
-const env = Object.fromEntries(
-  readFileSync(".env", "utf-8")
-    .split("\n")
-    .filter(Boolean)
-    .map((l) => l.split("="))
-    .map(([k, ...v]) => [k.trim(), v.join("=").trim()]),
-);
-
-const SUPABASE_URL = env.SUPABASE_URL;
-const SUPABASE_KEY = env.SUPABASE_SERVICE_ROLE_KEY;
+const SUPABASE_URL = process.env.SUPABASE_URL;
+const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
 function supFetch(url, opts = {}) {
   return fetch(`${SUPABASE_URL}/rest/v1/${url}`, {
@@ -110,6 +103,35 @@ export async function handleStockUpdate(payload) {
   }
 
   return { updated, skipped, total: items.length };
+}
+
+function normalizeStoreStatus(val) {
+  if (val === true || val === "true" || val === "1" || val === "on" || val === "ON" || val === "open" || val === "active" || val === "yes") return "1";
+  if (val === false || val === "false" || val === "0" || val === "off" || val === "OFF" || val === "closed" || val === "inactive" || val === "no") return "0";
+  if (val === undefined || val === null || val === "") return null;
+  return String(val);
+}
+
+export function handleStoreStatus(payload) {
+  const raw = payload ?? {};
+  log(`[START] Processing store status (${JSON.stringify(raw)?.slice(0, 500)})`);
+
+  const restID = raw.restID || raw.restaurantid || raw.restaurantId || process.env.PETPOOJA_RESTAURANT_ID || "";
+  const storeStatus = normalizeStoreStatus(
+    raw.store_status ?? raw.storeStatus ?? raw.active ?? raw.is_active ??
+    raw.isOpen ?? raw.is_open ?? raw.status ?? raw.state ??
+    (typeof raw.inStock === "boolean" ? (raw.inStock ? "1" : "0") : undefined) ??
+    (typeof raw.is_in_stock === "boolean" ? (raw.is_in_stock ? "1" : "0") : undefined)
+  );
+  const turnOnTime = raw.turn_on_time || raw.turnOnTime || raw.autoTurnOnTime || raw.auto_turn_on_time || "";
+
+  const result = { restID, store_status: storeStatus, turn_on_time: turnOnTime };
+  if (storeStatus) {
+    log(`[STORE] ${restID || "unknown"} → ${storeStatus === "1" ? "open" : "closed"}${turnOnTime ? ` (auto-on ${turnOnTime})` : ""}`);
+  } else {
+    log(`[STORE] Unknown status payload: ${JSON.stringify(raw)?.slice(0, 300)}`);
+  }
+  return result;
 }
 
 if (process.argv[1]?.endsWith("stock-update.js")) {

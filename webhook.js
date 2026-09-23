@@ -19,23 +19,6 @@ const STATUS_MAP = {
   "5": "ready",
   "10": "delivered",
 };
-
-const SUPABASE_URL = process.env.SUPABASE_URL;
-const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
-const sf = (url, o = {}) => fetch(SUPABASE_URL + "/rest/v1/" + url, {
-  ...o, headers: { apikey: SUPABASE_KEY, Authorization: `Bearer ${SUPABASE_KEY}`, "Content-Type": "application/json", ...o.headers }
-});
-
-const STATUS_MAP = {
-  "-1": "cancelled",
-  "1": "accepted",
-  "2": "accepted",
-  "3": "accepted",
-  "4": "ready",
-  "5": "ready",
-  "10": "delivered",
-};
-
 const LOG_FILE = "menu-pushes.log";
 
 function log(line) {

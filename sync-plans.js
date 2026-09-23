@@ -101,7 +101,7 @@ for (const match of matchedCategories) {
       id: r?.id || undefined,
       meal_plan_id: match.plan.id,
       name,
-      description: match.categoryname,
+      categoryname: match.categoryname,
       slot: match.slot,
       is_veg: mapAttr(item.item_attributeid),
       price: parseFloat(item.price) || 0,

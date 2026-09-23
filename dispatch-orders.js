@@ -76,7 +76,7 @@ console.log(`[DISPATCH] Slot: ${slot}, Delivery date: ${deliveryDate}`);
 const orderRes = await supFetch(
   `orders?select=id,phone,delivery_date,slot,delivery_time,status,subscription_id,item_id,item_name` +
     `&delivery_date=eq.${deliveryDate}&slot=eq.${slot}` +
-    `&status=in.(pending,confirmed)&is_default=eq.true&order=created_at.asc`,
+    `&status=in.(pending,confirmed)&order=created_at.asc`,
 );
 
 const orders = orderRes.ok ? await orderRes.json() : [];
@@ -100,12 +100,12 @@ const [dishes, customers, subs] = await Promise.all([
     : [],
   phones.length
     ? supFetch(
-        `customers?select=phone,name,address,location&phone=in.(${phones.join(",")})`,
+        `customers?select=phone,name,id&phone=in.(${phones.join(",")})`,
       ).then((r) => (r.ok ? r.json() : []))
     : [],
   subIds.length
     ? supFetch(
-        `meal_plan_subscriptions?select=id,plan_type,meal_plan_id&id=in.(${subIds.join(",")})`,
+        `meal_plan_subscriptions?select=id,plan_type,meal_plan_id,address_id&id=in.(${subIds.join(",")})`,
       ).then((r) => (r.ok ? r.json() : []))
     : [],
 ]);
@@ -113,6 +113,44 @@ const [dishes, customers, subs] = await Promise.all([
 const dishMap = Object.fromEntries(dishes.map((d) => [d.id, d]));
 const custMap = Object.fromEntries(customers.map((c) => [c.phone, c]));
 const subMap = Object.fromEntries(subs.map((s) => [s.id, s]));
+
+// ─── Delivery addresses (new model) ───────────────────────────────────────────
+// Delivery address lives in customer_addresses, referenced by
+// meal_plan_subscriptions.address_id (per-subscription). Subscriptions created
+// before that column existed have address_id = NULL — for those we fall back to
+// the customer's default address book entry.
+const customerIds = [
+  ...new Set(customers.map((c) => c.id).filter(Boolean)),
+];
+const addrRows = customerIds.length
+  ? await supFetch(
+      `customer_addresses?select=id,customer_id,address,location,is_default&customer_id=in.(${customerIds.join(",")})&order=created_at.asc`,
+    ).then((r) => (r.ok ? r.json() : []))
+  : [];
+
+const addrById = Object.fromEntries(addrRows.map((a) => [a.id, a]));
+const defaultAddrByCustomer = {};
+const anyAddrByCustomer = {};
+for (const a of addrRows) {
+  if (a.is_default && !defaultAddrByCustomer[a.customer_id]) {
+    defaultAddrByCustomer[a.customer_id] = a;
+  }
+  if (!anyAddrByCustomer[a.customer_id]) {
+    anyAddrByCustomer[a.customer_id] = a;
+  }
+}
+
+// Resolve the delivery address for an order: the subscription's own address
+// first, then the customer's default address (covers pre-migration subs).
+function resolveOrderAddress(order, cust, sub) {
+  if (sub?.address_id && addrById[sub.address_id]) {
+    return addrById[sub.address_id];
+  }
+  if (cust) {
+    return defaultAddrByCustomer[cust.id] || anyAddrByCustomer[cust.id] || null;
+  }
+  return null;
+}
 
 const planPricingMap = {};
 for (const sub of subs) {
@@ -132,6 +170,7 @@ for (const order of orders) {
   const cust = custMap[order.phone];
   const sub = subMap[order.subscription_id];
   const perMealCost = planPricingMap[order.subscription_id];
+  const clientId = `FF-${order.delivery_date.replace(/-/g, "")}-${order.id.split("-")[0]}`;
 
   if (!dish?.petpooja_item_id) {
     console.error(`[SKIP] Order ${order.id}: dish missing petpooja_item_id`);
@@ -139,49 +178,49 @@ for (const order of orders) {
     continue;
   }
   if (!cust) {
-    console.error(
-      `[SKIP] Order ${order.id}: customer ${order.phone} not found`,
-    );
+    console.error(`[SKIP] Order ${order.id}: customer ${order.phone} not found`);
     failed++;
     continue;
   }
 
+  const addr = resolveOrderAddress(order, cust, sub);
+  if (!addr) {
+    console.error(`[SKIP] Order ${order.id}: no delivery address for ${order.phone} — add one via the dashboard before dispatch`);
+    failed++;
+    continue;
+  }
+
+  const addressText = addr.address || "";
   let lat = "",
     lng = "";
-  if (cust.location) {
-    const loc =
-      typeof cust.location === "string"
-        ? JSON.parse(cust.location)
-        : cust.location;
-    lat = loc?.lat?.toString() || "";
-    lng = loc?.lng?.toString() || "";
+  if (addr.location && typeof addr.location === "object") {
+    lat = (addr.location.latitude ?? addr.location.lat ?? "").toString();
+    lng = (addr.location.longitude ?? addr.location.lng ?? "").toString();
   }
+
+  const now = new Date();
+  const createdOn = now.toISOString().replace("T", " ").slice(0, 19);
 
   const payload = {
     app_key: env.PETPOOJA_APP_KEY,
     app_secret: env.PETPOOJA_APP_SECRET,
     access_token: env.PETPOOJA_ACCESS_TOKEN,
-    restID: env.PETPOOJA_RESTAURANT_ID,
-    res_name: RES_NAME,
-    address: RES_ADDRESS,
-    Contact_information: RES_CONTACT,
-    udid: "",
     device_type: "Web",
     orderinfo: {
       OrderInfo: {
         Restaurant: {
           details: {
+            restID: env.PETPOOJA_RESTAURANT_ID,
             res_name: RES_NAME,
             address: RES_ADDRESS,
             contact_information: RES_CONTACT,
-            restID: env.PETPOOJA_RESTAURANT_ID,
           },
         },
         Customer: {
           details: {
             name: cust.name || "",
             phone: cust.phone,
-            address: cust.address || "",
+            address: addressText,
             email: "",
             latitude: lat,
             longitude: lng,
@@ -189,15 +228,26 @@ for (const order of orders) {
         },
         Order: {
           details: {
-            orderID: order.id,
+            orderID: clientId,
             preorder_date: order.delivery_date,
-            preorder_time: order.delivery_time?.slice(0, 5) || "00:00",
-            total: perMealCost.toFixed(2),
-            payment_type: "ONLINE",
-            advanced_order: "Y",
+            preorder_time: (order.delivery_time?.slice(0, 5) || "00:00") + ":00",
+            service_charge: "0",
+            sc_tax_amount: "0",
             delivery_charges: "0",
+            dc_tax_percentage: "0",
+            dc_tax_amount: "0",
             packing_charges: "0",
-            created_on: new Date().toISOString().replace("T", " ").slice(0, 19),
+            pc_tax_amount: "0",
+            pc_tax_percentage: "0",
+            order_type: "H",
+            payment_type: "ONLINE",
+            discount_type: "F",
+            discount_total: "0",
+            tax_total: "0",
+            total: perMealCost.toFixed(2) || "0",
+            advanced_order: "Y",
+            callback_url: "http://217.160.147.131/order-status",
+            created_on: createdOn,
           },
         },
         OrderItem: {
@@ -210,15 +260,15 @@ for (const order of orders) {
               quantity: "1",
               tax_inclusive: true,
               gst_liability: "restaurant",
-              item_tax: "0",
+              item_tax: [],
+              item_discount: "0",
               variation_name: "",
               variation_id: "",
-              AddonItem: [],
+              AddonItem: { details: [] },
             },
           ],
         },
         Tax: { details: [] },
-        Discount: { details: [] },
       },
     },
   };
@@ -231,10 +281,10 @@ for (const order of orders) {
 
   const text = await res.text();
   if (res.ok) {
-    console.log(`[OK] Order ${order.id} (${dish.name}) → Petpooja`);
+    console.log(`[OK] Order ${clientId} (${dish.name}) → Petpooja`);
     await supFetch(`orders?id=eq.${order.id}`, {
       method: "PATCH",
-      body: JSON.stringify({ status: "delivered" }),
+      body: JSON.stringify({ status: "sent_to_kitchen", petpooja_client_id: clientId }),
     }).catch((e) =>
       console.error(`[WARN] Failed to update order ${order.id}: ${e.message}`),
     );

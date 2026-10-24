@@ -72,6 +72,21 @@ async function notifyDispatch(clientId) {
 const PORT = process.env.PORT || 3000;
 const SECRET = process.env.INTERNAL_SECRET || "fitfuel-secret";
 const PP_API = process.env.PETPOOJA_API_URL || "https://qle1yy2ydc.execute-api.ap-southeast-1.amazonaws.com/V1";
+const PP_RIDER_STATUS_URL = process.env.PETPOOJA_RIDER_STATUS_UPDATE_URL || `${PP_API}/rider_status_update`;
+const PP_UPDATE_ORDER_STATUS_URL =
+  process.env.PETPOOJA_UPDATE_ORDER_STATUS_URL || `${PP_API}/update_order_status`;
+
+function ppAuth(req) {
+  return (req.headers["authorization"] || "") === `Bearer ${SECRET}`;
+}
+
+function ppForward(res, url, payload) {
+  return fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+}
 
 function read(req) {
   return new Promise((resolve, reject) => {
@@ -114,6 +129,62 @@ http.createServer(async (req, res) => {
     });
     const txt = await pp.text();
     try { return json(res, pp.ok ? 200 : 502, JSON.parse(txt)); } catch { return json(res, 502, { error: txt }); }
+  }
+
+  // ── Rider status update ───────────────────────────────────────
+  if (req.url === "/rider-status-update") {
+    if (!ppAuth(req)) return json(res, 401, { error: "Unauthorized" });
+    const {
+      orderID,
+      restID = process.env.PETPOOJA_RESTAURANT_ID,
+      rider_name,
+      rider_phone,
+      status,
+      ...rest
+    } = body || {};
+    if (!orderID || !status)
+      return json(res, 400, { error: "orderID and status are required" });
+    const payload = {
+      app_key: process.env.PETPOOJA_APP_KEY,
+      app_secret: process.env.PETPOOJA_APP_SECRET,
+      access_token: process.env.PETPOOJA_ACCESS_TOKEN,
+      restID,
+      orderID,
+      ...(rider_name ? { rider_name } : {}),
+      ...(rider_phone ? { rider_phone } : {}),
+      ...(status ? { status } : {}),
+      ...rest,
+    };
+    const pres = await ppForward(res, PP_RIDER_STATUS_URL, payload);
+    const ptxt = await pres.text();
+    try { return json(res, pres.ok ? 200 : 502, JSON.parse(ptxt)); } catch { return json(res, 502, { error: ptxt }); }
+  }
+
+  // ── Order status update (cancel) ──────────────────────────────
+  if (req.url === "/update-order-status") {
+    if (!ppAuth(req)) return json(res, 401, { error: "Unauthorized" });
+    const {
+      orderID,
+      restID = process.env.PETPOOJA_RESTAURANT_ID,
+      status,
+      cancel_reason = "",
+      ...rest
+    } = body || {};
+    if (!orderID || !status)
+      return json(res, 400, { error: "orderID and status are required" });
+    const payload = {
+      app_key: process.env.PETPOOJA_APP_KEY,
+      app_secret: process.env.PETPOOJA_APP_SECRET,
+      access_token: process.env.PETPOOJA_ACCESS_TOKEN,
+      restID,
+      orderID,
+      status,
+      cancel_reason,
+      ...rest,
+    };
+    const ures = await ppForward(res, PP_UPDATE_ORDER_STATUS_URL, payload);
+    const utxt = await ures.text();
+    try { return json(res, ures.ok ? 200 : 502, JSON.parse(utxt)); } catch { return json(res, 502, { error: utxt }); }
   }
 
   // ── Stock update from Petpooja ──────────────────────────────

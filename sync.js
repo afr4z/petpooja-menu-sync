@@ -21,11 +21,15 @@ export async function syncMenu(data) {
   for (const p of plans) planByTag[p.tag.toLowerCase()] = p;
 
 function parseCategoryName(categoryName) {
-  const parts = categoryName.trim().toLowerCase().split("_");
+  // Petpooja's online display categories are prefixed with "Online "
+  // (e.g. "Online Healthy_nonveg_breakfast"); the integration key is the
+  // same name without that prefix.
+  const cleaned = categoryName.trim().replace(/^online[\s_]+/i, "");
+  const parts = cleaned.toLowerCase().split("_");
   const slot = parts.pop();
   const tag = parts.join("_");
   if (!["breakfast", "lunch", "dinner"].includes(slot)) return null;
-  return { tag, slot };
+  return { tag, slot, cleanName: cleaned };
 }
 
   const matchedCategories = [];
@@ -33,7 +37,7 @@ function parseCategoryName(categoryName) {
     const parsed = parseCategoryName(cat.categoryname);
     if (!parsed) continue;
     const plan = planByTag[parsed.tag];
-    if (plan) matchedCategories.push({ ...cat, plan, slot: parsed.slot });
+    if (plan) matchedCategories.push({ ...cat, plan, slot: parsed.slot, cleanName: parsed.cleanName });
   }
   if (!matchedCategories.length) return { upserted: 0, disabled: 0, message: "No categories matched meal plans" };
 
@@ -65,7 +69,7 @@ function parseCategoryName(categoryName) {
         id: r?.id || undefined,
         meal_plan_id: match.plan.id,
         name,
-        categoryname: match.categoryname,
+        categoryname: match.cleanName,
         slot: match.slot,
         is_veg: mapAttr(item.item_attributeid),
         price: parseFloat(item.price) || 0,
@@ -83,7 +87,15 @@ function parseCategoryName(categoryName) {
     });
   }
 
-  const disable = existing.filter(d => d.is_available && !keys.has(`${d.name.toLowerCase()}|${d.meal_plan_id}|${d.slot}`));
+  // A push may cover only some meal plans. Only disable dishes in the
+  // plan/slot combinations this push actually touched; otherwise a single
+  // meal-plan push would deactivate every other plan's dishes.
+  const touched = new Set(matchedCategories.map(m => `${m.plan.id}|${m.slot}`));
+  const disable = existing.filter(d =>
+    d.is_available &&
+    touched.has(`${d.meal_plan_id}|${d.slot}`) &&
+    !keys.has(`${d.name.toLowerCase()}|${d.meal_plan_id}|${d.slot}`)
+  );
   if (disable.length) {
     const ids = disable.map(d => d.id);
     await supFetch(`dishes?id=in.(${ids.join(",")})`, {

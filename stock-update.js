@@ -1,7 +1,22 @@
 import "./load-env.js";
-import { readFileSync, appendFileSync } from "node:fs";
+import { readFileSync, writeFileSync, appendFileSync } from "node:fs";
 
 const LOG_FILE = "stock-updates.log";
+const STORE_STATUS_FILE = "store-status.json";
+
+function readStoreStatus() {
+  try {
+    return JSON.parse(readFileSync(STORE_STATUS_FILE, "utf-8"));
+  } catch {
+    return { store_status: "1", turn_on_time: "", updated_at: null };
+  }
+}
+
+function writeStoreStatus(data) {
+  try {
+    writeFileSync(STORE_STATUS_FILE, JSON.stringify(data, null, 2));
+  } catch {}
+}
 
 function log(line) {
   const ts = new Date().toISOString().replace("T", " ").slice(0, 19);
@@ -27,6 +42,21 @@ function supFetch(url, opts = {}) {
 
 function parseItems(payload) {
   const items = [];
+
+  // Petpooja native format:
+  //   { restID, type: "item"|"addon", inStock: true|false, itemID: ["..."] }
+  if (payload?.itemID !== undefined || payload?.itemId !== undefined) {
+    const rawIds = payload.itemID ?? payload.itemId;
+    const ids = Array.isArray(rawIds) ? rawIds : [rawIds];
+    const available = normalizeActive(
+      payload.inStock ?? payload.in_stock ?? payload.active ?? true
+    );
+    for (const id of ids) {
+      if (id === undefined || id === null || id === "") continue;
+      items.push({ itemid: String(id), available });
+    }
+    return items;
+  }
 
   if (payload?.items && Array.isArray(payload.items)) {
     for (const it of payload.items) {
@@ -112,6 +142,20 @@ function normalizeStoreStatus(val) {
   return String(val);
 }
 
+export function getStoreStatus(payload = {}) {
+  const raw = payload ?? {};
+  const restID = raw.restID || raw.restaurantid || raw.restaurantId || process.env.PETPOOJA_RESTAURANT_ID || "";
+  const current = readStoreStatus();
+  return {
+    http_code: 200,
+    status: "success",
+    restID,
+    store_status: current.store_status || "1",
+    turn_on_time: current.turn_on_time || "",
+    message: "Store Delivery Status fetched successfully",
+  };
+}
+
 export function handleStoreStatus(payload) {
   const raw = payload ?? {};
   log(`[START] Processing store status (${JSON.stringify(raw)?.slice(0, 500)})`);
@@ -127,6 +171,13 @@ export function handleStoreStatus(payload) {
 
   const result = { restID, store_status: storeStatus, turn_on_time: turnOnTime };
   if (storeStatus) {
+    writeStoreStatus({
+      restID,
+      store_status: storeStatus,
+      turn_on_time: turnOnTime,
+      reason: raw.reason || "",
+      updated_at: new Date().toISOString(),
+    });
     log(`[STORE] ${restID || "unknown"} → ${storeStatus === "1" ? "open" : "closed"}${turnOnTime ? ` (auto-on ${turnOnTime})` : ""}`);
   } else {
     log(`[STORE] Unknown status payload: ${JSON.stringify(raw)?.slice(0, 300)}`);

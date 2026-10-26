@@ -2,6 +2,7 @@
 *.bak.*
 *.bak
 *.log
+store-status.json
 menu-dumps/
 *.mjs
 test-*.py

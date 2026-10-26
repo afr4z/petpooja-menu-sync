@@ -2,7 +2,7 @@ import "./load-env.js";
 import http from "node:http";
 import { appendFileSync } from "node:fs";
 import { syncMenu } from "./sync.js";
-import { handleStockUpdate, handleStoreStatus } from "./stock-update.js";
+import { handleStockUpdate, handleStoreStatus, getStoreStatus } from "./stock-update.js";
 
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -191,14 +191,44 @@ http.createServer(async (req, res) => {
   if (req.url === "/stock-update") {
     const r = await handleStockUpdate(body);
     log(`[STOCK] ${JSON.stringify(r)}`);
-    return json(res, 200, { success: "1", ...r });
+    const ok = (r.updated ?? 0) > 0 || (r.total ?? 0) > 0;
+    return json(res, ok ? 200 : 400, {
+      code: ok ? 200 : 400,
+      status: ok ? "success" : "failed",
+      message: ok ? "Stock status updated successfully" : (r.message || "Stock status not updated successfully"),
+      ...r,
+    });
   }
 
   // ── Store status from Petpooja ──────────────────────────────
   if (req.url === "/store-status") {
+    const hasStatusUpdate =
+      body &&
+      (body.store_status !== undefined ||
+        body.storeStatus !== undefined ||
+        body.active !== undefined ||
+        body.is_active !== undefined ||
+        body.isOpen !== undefined ||
+        body.is_open !== undefined ||
+        body.status !== undefined ||
+        body.state !== undefined ||
+        body.inStock !== undefined ||
+        body.is_in_stock !== undefined);
+
+    if (!hasStatusUpdate) {
+      const current = getStoreStatus(body);
+      log(`[STORE] GET ${JSON.stringify(current)}`);
+      return json(res, 200, current);
+    }
+
     const r = handleStoreStatus(body);
     log(`[STORE] ${JSON.stringify(r)}`);
-    return json(res, 200, { success: "1", ...r });
+    return json(res, 200, {
+      http_code: 200,
+      status: "success",
+      message: `Store Status updated successfully for store ${r.restID || ""}`.trim(),
+      ...r,
+    });
   }
 
   // ── Menu push from Petpooja ─────────────────────────────────

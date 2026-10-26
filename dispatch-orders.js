@@ -246,7 +246,7 @@ for (const order of orders) {
             tax_total: "0",
             total: perMealCost.toFixed(2) || "0",
             advanced_order: "Y",
-            callback_url: "http://217.160.147.131/order-status",
+            callback_url: env.ORDER_STATUS_CALLBACK_URL || "https://217.160.147.131.sslip.io/order-status",
             created_on: createdOn,
           },
         },

@@ -79,12 +79,19 @@ function parseCategoryName(categoryName) {
     }
   }
 
-  for (let i = 0; i < batch.length; i += 100) {
-    await supFetch("dishes", {
-      method: "POST",
-      headers: { Prefer: "resolution=merge-duplicates" },
-      body: JSON.stringify(batch.slice(i, i + 100)),
-    });
+  // PostgREST requires every object in a bulk insert to have the same keys.
+  // Existing dishes carry an `id`; new dishes do not, so send them separately.
+  for (const group of [batch.filter(r => r.id), batch.filter(r => !r.id)]) {
+    for (let i = 0; i < group.length; i += 100) {
+      const res = await supFetch("dishes", {
+        method: "POST",
+        headers: { Prefer: "resolution=merge-duplicates" },
+        body: JSON.stringify(group.slice(i, i + 100)),
+      });
+      if (!res.ok) {
+        throw new Error(`dishes upsert failed ${res.status}: ${await res.text()}`);
+      }
+    }
   }
 
   // A push may cover only some meal plans. Only disable dishes in the

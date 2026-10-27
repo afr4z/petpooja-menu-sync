@@ -36,6 +36,13 @@ function slotLabel(slot) {
   return m[slot] || slot || "Meal";
 }
 
+function stripDishSlotSuffix(name) {
+  if (!name) return name;
+  return String(name)
+    .replace(/\s*[(\[]\s*(breakfast|lunch|dinner)\s*[)\]]\s*$/i, "")
+    .trim();
+}
+
 async function notifyDispatch(clientId) {
   if (!NOTIFY_URL || !CRON_SECRET) {
     log(`[NOTIFY] Skipped ${clientId}: APP_URL/CRON_SECRET not configured`);
@@ -51,9 +58,10 @@ async function notifyDispatch(clientId) {
     return;
   }
   const emoji = order.slot === "breakfast" ? "☀️" : order.slot === "dinner" ? "🌙" : "🍽️";
+  const itemName = stripDishSlotSuffix(order.item_name);
   const message =
     `🚚 *Meal Dispatched*\n\n` +
-    `${emoji} *${slotLabel(order.slot)}*: ${order.item_name || "Your meal"}\n\n` +
+    `${emoji} *${slotLabel(order.slot)}*: ${itemName || "Your meal"}\n\n` +
     `Your meal is on its way and will be with you shortly! 🍽️\n\n` +
     `— FitFuel Nutrition`;
 

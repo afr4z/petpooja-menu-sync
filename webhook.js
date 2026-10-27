@@ -80,7 +80,7 @@ function ppAuth(req) {
   return (req.headers["authorization"] || "") === `Bearer ${SECRET}`;
 }
 
-function ppForward(res, url, payload) {
+function ppForward(url, payload) {
   return fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -157,7 +157,7 @@ async function handle(req, res) {
       ...(status ? { status } : {}),
       ...rest,
     };
-    const pres = await ppForward(res, PP_RIDER_STATUS_URL, payload);
+    const pres = await ppForward(PP_RIDER_STATUS_URL, payload);
     const ptxt = await pres.text();
     try { return json(res, pres.ok ? 200 : 502, JSON.parse(ptxt)); } catch { return json(res, 502, { error: ptxt }); }
   }
@@ -184,7 +184,7 @@ async function handle(req, res) {
       cancel_reason,
       ...rest,
     };
-    const ures = await ppForward(res, PP_UPDATE_ORDER_STATUS_URL, payload);
+    const ures = await ppForward(PP_UPDATE_ORDER_STATUS_URL, payload);
     const utxt = await ures.text();
     try { return json(res, ures.ok ? 200 : 502, JSON.parse(utxt)); } catch { return json(res, 502, { error: utxt }); }
   }

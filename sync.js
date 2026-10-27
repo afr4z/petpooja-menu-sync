@@ -13,13 +13,6 @@ function mapAttr(id) {
   return id === "1" ? true : id === "2" ? false : true;
 }
 
-export async function syncMenu(data) {
-  const plans = await supFetch("meal_plans?select=id,name,tag&is_active=eq.true").then(r => r.json());
-  if (!plans.length) return { upserted: 0, disabled: 0 };
-
-  const planByTag = {};
-  for (const p of plans) planByTag[p.tag.toLowerCase()] = p;
-
 function parseCategoryName(categoryName) {
   // Petpooja's online display categories are prefixed with "Online "
   // (e.g. "Online Healthy_nonveg_breakfast"); the integration key is the
@@ -31,6 +24,13 @@ function parseCategoryName(categoryName) {
   if (!["breakfast", "lunch", "dinner"].includes(slot)) return null;
   return { tag, slot, cleanName: cleaned };
 }
+
+export async function syncMenu(data) {
+  const plans = await supFetch("meal_plans?select=id,name,tag&is_active=eq.true").then(r => r.json());
+  if (!plans.length) return { upserted: 0, disabled: 0 };
+
+  const planByTag = {};
+  for (const p of plans) planByTag[p.tag.toLowerCase()] = p;
 
   const matchedCategories = [];
   for (const cat of data.categories || []) {

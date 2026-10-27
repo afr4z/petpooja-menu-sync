@@ -89,11 +89,13 @@ function ppForward(res, url, payload) {
 }
 
 function read(req) {
-  return new Promise((resolve, reject) => {
+  return new Promise((resolve) => {
     const c = [];
     req.on("data", d => c.push(d));
     req.on("end", () => { try { resolve(JSON.parse(Buffer.concat(c).toString())); } catch { resolve(null); } });
-    req.on("error", reject);
+    // Aborted/closed sockets are normal client disconnects, not server errors.
+    req.on("error", () => resolve(null));
+    req.on("aborted", () => resolve(null));
   });
 }
 
@@ -102,7 +104,7 @@ function json(res, code, body) {
   res.end(JSON.stringify(body));
 }
 
-http.createServer(async (req, res) => {
+async function handle(req, res) {
   if (req.method === "GET" && req.url === "/health") return json(res, 200, { ok: true });
   if (req.method !== "POST") return json(res, 405, { error: "Method not allowed" });
 
@@ -256,12 +258,14 @@ http.createServer(async (req, res) => {
 
   if (req.url === "/order-status") {
     log(`[CALLBACK] ${JSON.stringify(body)}`);
-    const { orderID: clientId, status, cancel_reason, ...rest } = body || {};
+    const { orderID: clientId, status, cancel_reason } = body || {};
     if (clientId && status) {
       const ourStatus = STATUS_MAP[String(status)];
       if (ourStatus) {
+        if (ourStatus === "cancelled" && cancel_reason) {
+          log(`[CALLBACK] Cancel reason for ${clientId}: ${cancel_reason}`);
+        }
         const update = { status: ourStatus };
-        if (ourStatus === "cancelled" && cancel_reason) update.cancel_reason = cancel_reason;
         const r = await sf(`orders?petpooja_client_id=eq.${encodeURIComponent(clientId)}`, {
           method: "PATCH",
           body: JSON.stringify(update),
@@ -284,4 +288,15 @@ http.createServer(async (req, res) => {
   }
 
   json(res, 404, { error: "Not found" });
+}
+
+http.createServer((req, res) => {
+  handle(req, res).catch((err) => {
+    log(`[SERVER] ${err?.stack || err?.message || err}`);
+    if (!res.headersSent) {
+      json(res, 500, { error: "Internal server error" });
+    } else {
+      try { res.end(); } catch {}
+    }
+  });
 }).listen(PORT, () => console.log(`listening on ${PORT}`));

@@ -30,7 +30,82 @@ function supFetch(url, opts = {}) {
   });
 }
 
-const PLAN_TYPE_TO_DAYS = { "3day": 3, weekly: 7, biweekly: 14, monthly: 30 };
+const PLAN_TYPE_TO_DAYS = { "3day": 3, weekly: 7, biweekly: 14, monthly: 28 };
+
+// ─── Distance-based delivery ──────────────────────────────────────────────────
+// Keep these defaults in sync with lib/deliveryPricing.js in the FitFuel repo.
+const DELIVERY = {
+  freeKm: Number(env.DELIVERY_FREE_KM || 3),
+  standardPerMeal: Number(env.DELIVERY_STANDARD_PER_MEAL || 20),
+  longPlanPerMeal: Number(env.DELIVERY_LONG_PLAN_PER_MEAL || 15),
+  longPlanMinDays: Number(env.DELIVERY_LONG_PLAN_MIN_DAYS || 20),
+  unknownPolicy: env.DELIVERY_UNKNOWN_POLICY || "charge",
+  // Existing subscriptions created before this instant are never charged
+  // delivery. New subscriptions are created after it.
+  launchAt: env.DELIVERY_LAUNCH_AT || "2026-10-28T00:00:00+05:30",
+};
+
+const KITCHEN = {
+  latitude: Number(env.KITCHEN_LAT || 17.2478673),
+  longitude: Number(env.KITCHEN_LNG || 80.1496404),
+};
+
+function normalizeCoords(location) {
+  if (!location) return null;
+  if (typeof location === "string") {
+    const match = location.match(
+      /^\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*$/,
+    );
+    if (!match) return null;
+    return {
+      latitude: Number(match[1]),
+      longitude: Number(match[2]),
+    };
+  }
+  if (typeof location !== "object") return null;
+
+  const latitude = Number(location.latitude ?? location.lat);
+  const longitude = Number(
+    location.longitude ?? location.lng ?? location.lon,
+  );
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return null;
+  return { latitude, longitude };
+}
+
+function haversineKm(origin, destination) {
+  const toRad = (degrees) => (degrees * Math.PI) / 180;
+  const earthRadiusKm = 6371;
+  const dLat = toRad(destination.latitude - origin.latitude);
+  const dLng = toRad(destination.longitude - origin.longitude);
+  const lat1 = toRad(origin.latitude);
+  const lat2 = toRad(destination.latitude);
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.sin(dLng / 2) ** 2 * Math.cos(lat1) * Math.cos(lat2);
+  return earthRadiusKm * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+function deliveryChargeForOrder(sub, addr) {
+  if (!sub) return 0;
+
+  const created = new Date(sub.created_at).getTime();
+  const launch = new Date(DELIVERY.launchAt).getTime();
+  if (!Number.isFinite(created) || created < launch) return 0;
+
+  const days = PLAN_TYPE_TO_DAYS[sub.plan_type] || 28;
+  const rate =
+    days >= DELIVERY.longPlanMinDays
+      ? DELIVERY.longPlanPerMeal
+      : DELIVERY.standardPerMeal;
+
+  const coords = normalizeCoords(addr?.location);
+  if (!coords) {
+    return DELIVERY.unknownPolicy === "free" ? 0 : rate;
+  }
+
+  const distanceKm = haversineKm(KITCHEN, coords);
+  return distanceKm <= DELIVERY.freeKm ? 0 : rate;
+}
 
 function toIST(d) {
   return new Date(d.getTime() + 5.5 * 60 * 60 * 1000);
@@ -105,7 +180,7 @@ const [dishes, customers, subs] = await Promise.all([
     : [],
   subIds.length
     ? supFetch(
-        `meal_plan_subscriptions?select=id,plan_type,meal_plan_id,address_id&id=in.(${subIds.join(",")})`,
+        `meal_plan_subscriptions?select=id,plan_type,meal_plan_id,address_id,created_at&id=in.(${subIds.join(",")})`,
       ).then((r) => (r.ok ? r.json() : []))
     : [],
 ]);
@@ -154,7 +229,7 @@ function resolveOrderAddress(order, cust, sub) {
 
 const planPricingMap = {};
 for (const sub of subs) {
-  const days = PLAN_TYPE_TO_DAYS[sub.plan_type] || 30;
+  const days = PLAN_TYPE_TO_DAYS[sub.plan_type] || 28;
   const res = await supFetch(
     `plan_pricing?select=price_per_meal_per_day&plan_id=eq.${sub.meal_plan_id}&days=eq.${days}`,
   );
@@ -190,12 +265,21 @@ for (const order of orders) {
     continue;
   }
 
+  const delivery = deliveryChargeForOrder(sub, addr);
+  const orderTotal = perMealCost + delivery;
+  if (delivery > 0) {
+    console.log(
+      `[DELIVERY] Order ${order.id}: ₹${delivery.toFixed(2)} delivery`,
+    );
+  }
+
   const addressText = addr.address || "";
   let lat = "",
     lng = "";
-  if (addr.location && typeof addr.location === "object") {
-    lat = (addr.location.latitude ?? addr.location.lat ?? "").toString();
-    lng = (addr.location.longitude ?? addr.location.lng ?? "").toString();
+  const addrCoords = normalizeCoords(addr.location);
+  if (addrCoords) {
+    lat = addrCoords.latitude.toString();
+    lng = addrCoords.longitude.toString();
   }
 
   const now = new Date();
@@ -233,7 +317,7 @@ for (const order of orders) {
             preorder_time: (order.delivery_time?.slice(0, 5) || "00:00") + ":00",
             service_charge: "0",
             sc_tax_amount: "0",
-            delivery_charges: "0",
+            delivery_charges: delivery.toFixed(2),
             dc_tax_percentage: "0",
             dc_tax_amount: "0",
             packing_charges: "0",
@@ -244,7 +328,7 @@ for (const order of orders) {
             discount_type: "F",
             discount_total: "0",
             tax_total: "0",
-            total: perMealCost.toFixed(2) || "0",
+            total: orderTotal.toFixed(2),
             advanced_order: "Y",
             callback_url: env.ORDER_STATUS_CALLBACK_URL || "https://217.160.147.131.sslip.io/order-status",
             created_on: createdOn,

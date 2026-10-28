@@ -30,7 +30,13 @@ function supFetch(url, opts = {}) {
   });
 }
 
-const PLAN_TYPE_TO_DAYS = { "3day": 3, weekly: 7, biweekly: 14, monthly: 28 };
+const PLAN_TYPE_TO_DAYS = {
+  "3day": 3,
+  weekly: 7,
+  biweekly: 14,
+  "21day": 21,
+  monthly: 28,
+};
 
 // ─── Distance-based delivery ──────────────────────────────────────────────────
 // Keep these defaults in sync with lib/deliveryPricing.js in the FitFuel repo.

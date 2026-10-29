@@ -345,8 +345,11 @@ for (const order of orders) {
             {
               id: dish.petpooja_item_id,
               name: dish.name,
-              price: Number(dish.price).toFixed(2),
-              final_price: Number(dish.price).toFixed(2),
+              // Use plan pricing (what the customer actually paid) as the item
+              // price so that item price + delivery = total. dish.price is
+              // synced from Petpooja and can diverge from plan_pricing.
+              price: (perMealCost || Number(dish.price) || 0).toFixed(2),
+              final_price: (perMealCost || Number(dish.price) || 0).toFixed(2),
               quantity: "1",
               tax_inclusive: true,
               gst_liability: "restaurant",
